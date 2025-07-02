@@ -1,0 +1,137 @@
+<script type="text/javascript">
+    RED.nodes.registerType('function-editor', {
+        category: 'function',
+        color: '#007acc',
+        defaults: {
+            name: { value: '' },
+            port: { value: 3001, validate: RED.validators.number() },
+            flowsFile: { value: './flows.json' },
+            deployMethod: { value: 'partial-http' }
+        },
+        inputs: 0,
+        outputs: 0,
+        icon: 'function.png',
+        label: function() {
+            return this.name || 'Function Editor';
+        },
+        oneditprepare: function() {
+            // Create form fields for the node configuration
+            $('#node-input-name').val(this.name);
+            
+            // Add a button to open the Monaco editor
+            $('#dialog-form').append(`
+                <div class="form-row">
+                    <label for="open-editor-btn">Editor Interface</label>
+                    <button type="button" id="open-editor-btn" style="margin-left: 10px;">
+                        Open Function Editor
+                    </button>
+                </div>
+                <div class="form-row">
+                    <label for="port-input">Port</label>
+                    <input type="number" id="port-input" value="${this.port || 3001}" min="1024" max="65535">
+                </div>
+                <div class="form-row">
+                    <label for="flows-file-input">Flows File Path</label>
+                    <input type="text" id="flows-file-input" value="${this.flowsFile || './flows.json'}" placeholder="./flows.json">
+                </div>
+                <div class="form-row">
+                    <label for="deploy-method-select">Deployment Method</label>
+                    <select id="deploy-method-select" style="width: 200px;">
+                        <option value="websocket">WebSocket (Fastest)</option>
+                        <option value="partial-http">HTTP Partial Deploy</option>
+                        <option value="full-http">Full Flow Deploy</option>
+                    </select>
+                </div>
+            `);
+            
+            // Set the deployment method selection
+            $('#deploy-method-select').val(this.deployMethod || 'partial-http');
+            
+            // Handle opening the editor
+            $('#open-editor-btn').click(function() {
+                const port = $('#port-input').val();
+                // Use the current browser's hostname instead of hardcoded localhost
+                const hostname = window.location.hostname;
+                const protocol = window.location.protocol;
+                const url = `${protocol}//${hostname}:${port}/function-editor`;
+                window.open(url, '_blank');
+            });
+        },
+        oneditsave: function() {
+            this.name = $('#node-input-name').val();
+            this.port = parseInt($('#port-input').val()) || 3001;
+            this.flowsFile = $('#flows-file-input').val() || './flows.json';
+            this.deployMethod = $('#deploy-method-select').val() || 'partial-http';
+        }
+    });
+</script>
+
+<script type="text/html" data-template-name="function-editor">
+    <div class="form-row">
+        <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+        <input type="text" id="node-input-name" placeholder="Function Editor">
+    </div>
+</script>
+
+<script type="text/html" data-help-name="function-editor">
+    <p>A Node-RED custom node that provides a function editor interface for editing function nodes and dashboard templates.</p>
+    
+    <h3>Features</h3>
+    <ul>
+        <li>Extracts function node code and dashboard templates to external files</li>
+        <li>Provides a function editor web interface with syntax highlighting</li>
+        <li>Real-time synchronization with Node-RED flows</li>
+        <li>File tree navigation for easy file management</li>
+        <li>Auto-save functionality</li>
+        <li>Multiple deployment methods: WebSocket, HTTP Partial, and Full Flow</li>
+    </ul>
+    
+    <h3>Configuration</h3>
+    <dl class="message-properties">
+        <dt>Name <span class="property-type">string</span></dt>
+        <dd>The name of the node in the flow.</dd>
+        
+        <dt>Port <span class="property-type">number</span></dt>
+        <dd>The port number for the function editor web interface (default: 3001).</dd>
+        
+        <dt>Flows File Path <span class="property-type">string</span></dt>
+        <dd>The path to the flows.json file (default: ./flows.json).</dd>
+        
+        <dt>Deployment Method <span class="property-type">string</span></dt>
+        <dd>How changes are deployed to Node-RED:
+            <ul>
+                <li><strong>WebSocket</strong> - Fastest, uses Node-RED's internal WebSocket protocol</li>
+                <li><strong>HTTP Partial Deploy</strong> - Uses custom HTTP endpoint for partial deployments</li>
+                <li><strong>Full Flow Deploy</strong> - Replaces entire flow configuration (fallback)</li>
+            </ul>
+        </dd>
+    </dl>
+    
+    <h3>Usage</h3>
+    <ol>
+        <li>Add the Function Editor node to your flow</li>
+        <li>Configure the port, flows file path, and deployment method if needed</li>
+        <li>Deploy the flow</li>
+        <li>Click "Open Function Editor" in the node configuration</li>
+        <li>Edit your function nodes and dashboard templates in the function editor</li>
+        <li>Changes are automatically synchronized back to Node-RED using the selected deployment method</li>
+    </ol>
+    
+    <h3>Deployment Methods</h3>
+    <ul>
+        <li><strong>WebSocket (Recommended)</strong> - Uses the same protocol as Node-RED's editor for partial deployments. Fastest and most efficient.</li>
+        <li><strong>HTTP Partial Deploy</strong> - Uses a custom HTTP endpoint to deploy only changed nodes. Good fallback if WebSocket fails.</li>
+        <li><strong>Full Flow Deploy</strong> - Replaces the entire flow configuration. Safest but slowest method.</li>
+    </ul>
+    
+    <h3>Supported File Types</h3>
+    <ul>
+        <li>JavaScript (.js) - Function node code</li>
+        <li>Vue templates (.vue) - Dashboard UI templates</li>
+    </ul>
+    
+    <h3>Keyboard Shortcuts</h3>
+    <ul>
+        <li><code>Ctrl+S</code> (or <code>Cmd+S</code> on Mac) - Save current file</li>
+    </ul>
+</script> 

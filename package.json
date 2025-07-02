@@ -1,0 +1,47 @@
+{
+  "name": "node-red-contrib-function-editor",
+  "version": "1.0.0",
+  "description": "Node-RED custom node with function editor for function nodes and dashboard templates",
+  "license": "ISC",
+  "author": "",
+  "main": "index.js",
+  "node-red": {
+    "nodes": {
+      "function-editor": "function-editor.js"
+    }
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "vite build",
+    "dev": "vite",
+    "preview": "vite preview",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@fortawesome/free-regular-svg-icons": "^6.7.2",
+    "@fortawesome/free-solid-svg-icons": "^6.7.2",
+    "@fortawesome/react-fontawesome": "^0.2.2",
+    "@monaco-editor/react": "^4.7.0",
+    "@vitejs/plugin-react": "^4.6.0",
+    "autoprefixer": "^10.4.21",
+    "chokidar": "^3.5.3",
+    "express": "^4.18.2",
+    "fs-extra": "^11.1.1",
+    "monaco-editor": "^0.45.0",
+    "postcss": "^8.5.6",
+    "prettier": "^3.6.2",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "socket.io": "^4.7.4",
+    "socket.io-client": "^4.8.1",
+    "vite-plugin-monaco-editor": "^1.1.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.30.0",
+    "@tailwindcss/forms": "^0.5.10",
+    "eslint": "^9.30.0",
+    "eslint-plugin-node": "^11.1.0",
+    "tailwindcss": "^3.4.17",
+    "vite": "^5.0.0"
+  }
+}
