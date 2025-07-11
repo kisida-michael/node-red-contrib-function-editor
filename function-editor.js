@@ -180,8 +180,9 @@ module.exports = function(RED) {
             }
         }
         
-        node.srcDir = path.join(__dirname, 'src');
-        node.port = config.port || 3001;
+        node.functionsDir = path.join(__dirname, 'functions');
+        node.port = config.port;
+        node.watchEnabled = config.watchEnabled;
         
         // Debug logging
         node.log(`User directory: ${userDir}`);
@@ -202,81 +203,18 @@ module.exports = function(RED) {
             node.warn(`⚠️ Flows file does not exist yet: ${node.flowsFile}`);
         }
         
-        // Deployment method preference: 'websocket', 'partial-http', 'full-http'
-        node.deployMethod = config.deployMethod || 'partial-http';
+        // Deployment method preference: 'partial-http', 'full-http'
+        node.deployMethod = config.deployMethod;
         
-        // Ensure src directory exists
-        fs.ensureDirSync(node.srcDir);
+        // Ensure functions directory exists
+        fs.ensureDirSync(node.functionsDir);
         
         // Socket.IO server for real-time communication
         let io = null;
         let watcher = null;
-        let nodeRedSocket = null; // WebSocket connection to Node-RED
-        
-        // Initialize WebSocket connection to Node-RED for debug messages and partial deployments
-        function initNodeRedWebSocket() {
-            const shouldConnectForDeployment = node.deployMethod === 'websocket';
-            const shouldConnectForDebug = true; // Always try to connect for debug messages
-            
-            try {
-                const socketIoClient = require('socket.io-client');
-                const nodeRedPort = RED.settings.uiPort || 1880;
-                
-                node.log(`Attempting WebSocket connection to Node-RED on port ${nodeRedPort}`);
-                
-                // For now, skip WebSocket connection and use HTTP polling for debug messages instead
-                // Node-RED's WebSocket endpoint requires proper authentication and setup
-                node.log('WebSocket connection disabled - using HTTP polling for debug messages instead');
-                
-                if (shouldConnectForDeployment) {
-                    node.warn('WebSocket deployment method not available - falling back to HTTP partial deployment');
-                    node.deployMethod = 'partial-http';
-                }
-                
-                // Start HTTP polling for debug messages
-                startDebugPolling();
-                
-            } catch (error) {
-                node.warn(`Could not initialize Node-RED connection: ${error.message}`);
-                
-                if (shouldConnectForDeployment) {
-                    node.warn('Falling back to HTTP deployment methods');
-                    node.deployMethod = 'partial-http';
-                }
-                
-                if (shouldConnectForDebug) {
-                    node.warn('Debug message capture will not be available');
-                }
-            }
-        }
+        let functionsWatcher = null;
 
-        // Alternative: Simulate debug messages for testing
-        function startDebugPolling() {
-            node.log('Debug simulation enabled for testing');
-            
-            // Simulate some debug messages for testing (remove in production)
-            setInterval(() => {
-                if (io) {
-                    const sampleDebugMessage = {
-                        id: 'sample-debug-node',
-                        timestamp: Date.now(),
-                        msg: {
-                            payload: `Test debug message at ${new Date().toLocaleTimeString()}`,
-                            topic: 'test',
-                            _msgid: 'sample-' + Date.now()
-                        },
-                        format: 'object'
-                    };
-                    
-                    // Only send if we have connected clients
-                    if (io.engine.clientsCount > 0) {
-                        io.emit('debug-message', sampleDebugMessage);
-                        node.log('Sent sample debug message to clients');
-                    }
-                }
-            }, 10000); // Send a test message every 10 seconds
-        }
-        
+
         // Initialize the editor server
         function initEditorServer() {
             const express = require('express');
@@ -307,7 +245,7 @@ module.exports = function(RED) {
             // API endpoints
             app.get('/api/files', (req, res) => {
                 try {
-                    const files = getFileTreeWithFlows(node.srcDir, node.flowsFile);
+                    const files = getFileTreeWithFlows(node.functionsDir, node.flowsFile);
                     res.json(files);
                 } catch (error) {
                     res.status(500).json({ error: error.message });
@@ -316,7 +254,7 @@ module.exports = function(RED) {
             
             app.get('/api/file/:filename', (req, res) => {
                 try {
-                    const filePath = path.join(node.srcDir, req.params.filename);
+                    const filePath = path.join(node.functionsDir, req.params.filename);
                     if (fs.existsSync(filePath)) {
                         const content = fs.readFileSync(filePath, 'utf8');
                         res.json({ content });
@@ -331,7 +269,7 @@ module.exports = function(RED) {
             // Save individual file (no auto-deployment)
             app.post('/api/file/:filename', express.json(), (req, res) => {
                 try {
-                    const filePath = path.join(node.srcDir, req.params.filename);
+                    const filePath = path.join(node.functionsDir, req.params.filename);
                     fs.writeFileSync(filePath, req.body.content, 'utf8');
                     
                     node.log(`File saved: ${req.params.filename}`);
@@ -355,7 +293,7 @@ module.exports = function(RED) {
             // Save and deploy individual file
             app.post('/api/file/:filename/deploy', express.json(), (req, res) => {
                 try {
-                    const filePath = path.join(node.srcDir, req.params.filename);
+                    const filePath = path.join(node.functionsDir, req.params.filename);
                     fs.writeFileSync(filePath, req.body.content, 'utf8');
                     
                     node.log(`File saved and deploying: ${req.params.filename}`);
@@ -429,35 +367,17 @@ module.exports = function(RED) {
                 }
             });
 
-            // Get connected debug nodes for a specific function node
-            app.get('/api/debug-nodes/:functionNodeId', (req, res) => {
-                try {
-                    const functionNodeId = req.params.functionNodeId;
-                    const connectedDebugNodes = findConnectedDebugNodes(functionNodeId);
-                    res.json({ 
-                        functionNodeId,
-                        debugNodes: connectedDebugNodes 
-                    });
-                } catch (error) {
-                    node.error(`Error finding debug nodes: ${error.message}`);
-                    res.status(500).json({ error: error.message });
-                }
-            });
-
             // Trigger an inject node
             app.post('/api/trigger-inject/:injectNodeId', (req, res) => {
                 try {
                     const injectNodeId = req.params.injectNodeId;
+                    
                     triggerInjectNode(injectNodeId)
                         .then(() => {
-                            node.log(`Successfully triggered inject node: ${injectNodeId}`);
-                            res.json({ 
-                                success: true, 
-                                message: `Inject node ${injectNodeId} triggered successfully` 
-                            });
+                            res.json({ success: true, message: 'Inject node triggered successfully' });
                         })
                         .catch((error) => {
-                            node.error(`Failed to trigger inject node ${injectNodeId}: ${error.message}`);
+                            node.error(`Error triggering inject node: ${error.message}`);
                             res.status(500).json({ error: error.message });
                         });
                 } catch (error) {
@@ -537,35 +457,9 @@ module.exports = function(RED) {
                 }
             });
 
-            // Test debug message endpoint
+            // Remove test debug message endpoint
             app.post('/api/test-debug/:debugNodeId', (req, res) => {
-                try {
-                    const debugNodeId = req.params.debugNodeId;
-                    const testMessage = {
-                        id: debugNodeId,
-                        timestamp: Date.now(),
-                        msg: {
-                            payload: `Test message for debug node ${debugNodeId}`,
-                            topic: 'test',
-                            _msgid: 'test-' + Date.now()
-                        },
-                        format: 'object'
-                    };
-                    
-                    if (io) {
-                        io.emit('debug-message', testMessage);
-                        node.log(`Sent test debug message for node: ${debugNodeId}`);
-                        res.json({ 
-                            success: true, 
-                            message: `Test debug message sent for ${debugNodeId}` 
-                        });
-                    } else {
-                        res.status(500).json({ error: 'Socket.IO not available' });
-                    }
-                } catch (error) {
-                    node.error(`Error sending test debug message: ${error.message}`);
-                    res.status(500).json({ error: error.message });
-                }
+                res.status(404).json({ error: 'Debug functionality has been removed' });
             });
             
             // Socket.IO events
@@ -596,31 +490,7 @@ module.exports = function(RED) {
             });
         }
         
-        // Deploy individual nodes using WebSocket
-        function deployNodesViaWebSocket(updatedNodes) {
-            return new Promise((resolve, reject) => {
-                if (!nodeRedSocket || !nodeRedSocket.connected) {
-                    reject(new Error('Node-RED WebSocket not connected'));
-                    return;
-                }
-                
-                const nodeIds = updatedNodes.map(n => n.id);
-                
-                nodeRedSocket.emit('saveNodes', {
-                    nodes: updatedNodes,
-                    deploy: {
-                        type: 'nodes',
-                        nodes: nodeIds
-                    }
-                }, (err) => {
-                    if (err) {
-                        reject(new Error(`WebSocket deploy failed: ${err}`));
-                    } else {
-                        resolve();
-                    }
-                });
-            });
-        }
+
         
         // Deploy individual nodes using HTTP Admin API
         function deployNodesViaHTTP(updatedNodes) {
@@ -730,7 +600,7 @@ module.exports = function(RED) {
                 }
                 
                 // Read the file content
-                const filePath = path.join(node.srcDir, filename);
+                const filePath = path.join(node.functionsDir, filename);
                 if (!fs.existsSync(filePath)) {
                     node.warn(`File not found: ${filename}`);
                     return;
@@ -790,7 +660,7 @@ module.exports = function(RED) {
                     nodesToProcess.forEach(nodeData => {
                         if (nodeData.type === 'function') {
                             const filename = nodeData.id + '.js';
-                            const filePath = path.join(node.srcDir, filename);
+                            const filePath = path.join(node.functionsDir, filename);
                             let content = nodeData.func;
                             if (isCommentOnly(content) && nodeData.initialize && nodeData.initialize.trim()) {
                                 content = nodeData.initialize;
@@ -801,14 +671,14 @@ module.exports = function(RED) {
                         // Handle dashboard templates
                         if (nodeData.type === 'ui_template' && nodeData.template) {
                             const filename = nodeData.id + '.vue';
-                            const filePath = path.join(node.srcDir, filename);
+                            const filePath = path.join(node.functionsDir, filename);
                             fs.writeFileSync(filePath, nodeData.template, 'utf8');
                             extractedFiles.push(filename);
                         }
                     });
                 });
                 
-                node.log(`Extracted ${extractedFiles.length} files from flows.json`);
+                node.log(`Extracted ${extractedFiles.length} function files to /functions directory`);
                 if (io) {
                     io.emit('files-extracted', { files: extractedFiles });
                 }
@@ -827,7 +697,7 @@ module.exports = function(RED) {
                 }
                 
                 if (!silent) {
-                    node.log(`Collecting changes from ${node.srcDir} using ${node.deployMethod} deployment`);
+                    node.log(`Collecting changes from ${node.functionsDir} using ${node.deployMethod} deployment`);
                 }
                 
                 const flows = JSON.parse(fs.readFileSync(node.flowsFile, 'utf8'));
@@ -838,7 +708,7 @@ module.exports = function(RED) {
                 function processNode(nodeData) {
                     if (nodeData.type === 'function') {
                         const filename = nodeData.id + '.js';
-                        const filePath = path.join(node.srcDir, filename);
+                        const filePath = path.join(node.functionsDir, filename);
                         if (fs.existsSync(filePath)) {
                             const content = fs.readFileSync(filePath, 'utf8');
                             if (nodeData.func !== content) {
@@ -852,7 +722,7 @@ module.exports = function(RED) {
                         }
                     } else if (nodeData.type === 'ui_template') {
                         const filename = nodeData.id + '.vue';
-                        const filePath = path.join(node.srcDir, filename);
+                        const filePath = path.join(node.functionsDir, filename);
                         if (fs.existsSync(filePath)) {
                             const content = fs.readFileSync(filePath, 'utf8');
                             if (nodeData.template !== content) {
@@ -887,20 +757,7 @@ module.exports = function(RED) {
                     // Try deployment methods in order of preference
                     let deploySuccess = false;
                     
-                    // Method 1: WebSocket partial deployment
-                    if (node.deployMethod === 'websocket' && !deploySuccess) {
-                        try {
-                            await deployNodesViaWebSocket(updatedNodes);
-                            node.log(`Successfully deployed ${updatedNodes.length} nodes via WebSocket`);
-                            deploySuccess = true;
-                        } catch (error) {
-                            node.warn(`WebSocket deployment failed: ${error.message}`);
-                            node.warn('Falling back to HTTP partial deployment');
-                            node.deployMethod = 'partial-http';
-                        }
-                    }
-                    
-                    // Method 2: HTTP partial deployment
+                    // Method 1: HTTP partial deployment
                     if (node.deployMethod === 'partial-http' && !deploySuccess) {
                         try {
                             await deployNodesViaHTTP(updatedNodes);
@@ -913,7 +770,7 @@ module.exports = function(RED) {
                         }
                     }
                     
-                    // Method 3: Full flow deployment (fallback)
+                    // Method 2: Full flow deployment (fallback)
                     if (node.deployMethod === 'full-http' && !deploySuccess) {
                         try {
                             await deployFullFlows(flows);
@@ -963,6 +820,49 @@ module.exports = function(RED) {
                     extractFromFlows();
                 }, 100);
             });
+        }
+        
+        // Watch for changes in functions directory
+        function watchFunctionsDirectory() {
+            if (!node.watchEnabled) {
+                node.log('File watching disabled by configuration');
+                return;
+            }
+            
+            // Create functions directory if it doesn't exist
+            if (!fs.existsSync(node.functionsDir)) {
+                fs.mkdirSync(node.functionsDir, { recursive: true });
+                node.log(`Created functions directory: ${node.functionsDir}`);
+            }
+            
+            functionsWatcher = chokidar.watch(node.functionsDir, {
+                persistent: true,
+                ignoreInitial: true,
+                awaitWriteFinish: {
+                    stabilityThreshold: 200,
+                    pollInterval: 100
+                }
+            });
+            
+            functionsWatcher.on('all', (event, filePath) => {
+                // Skip if we're currently saving flows (to prevent race conditions)
+                if (node.isSaving) {
+                    node.log('Skipping functions watcher during save operation');
+                    return;
+                }
+                
+                // Only process .js and .vue files
+                if (filePath.endsWith('.js') || filePath.endsWith('.vue')) {
+                    node.log(`Detected change (${event}) in function file: ${path.basename(filePath)}`);
+                    
+                    // Small delay to ensure file write is complete
+                    setTimeout(() => {
+                        collectChanges(true); // true = silent mode for auto-collection
+                    }, 300);
+                }
+            });
+            
+            node.log(`Started watching functions directory: ${node.functionsDir}`);
         }
         
         // Utility functions
@@ -1100,78 +1000,6 @@ module.exports = function(RED) {
             return result;
         }
 
-        // Find debug nodes connected to a specific function node
-        function findConnectedDebugNodes(functionNodeId) {
-            try {
-                if (!fs.existsSync(node.flowsFile)) {
-                    node.warn(`Flows file not found: ${node.flowsFile}`);
-                    return [];
-                }
-
-                const flows = JSON.parse(fs.readFileSync(node.flowsFile, 'utf8'));
-                const connectedDebugNodes = [];
-
-                node.log(`Searching for debug nodes connected FROM function node: ${functionNodeId}`);
-
-                // First find the function node to get its output wires
-                let functionNode = null;
-                flows.forEach(flowItem => {
-                    if (flowItem.id === functionNodeId && flowItem.type === 'function') {
-                        functionNode = flowItem;
-                    }
-                });
-
-                if (!functionNode) {
-                    node.log(`Function node ${functionNodeId} not found`);
-                    return [];
-                }
-
-                if (!functionNode.wires || functionNode.wires.length === 0) {
-                    node.log(`Function node ${functionNodeId} has no output wires`);
-                    return [];
-                }
-
-                node.log(`Function node ${functionNodeId} has wires:`, functionNode.wires);
-
-                // Check each output wire for debug nodes
-                functionNode.wires.forEach((wireGroup, outputIndex) => {
-                    if (Array.isArray(wireGroup)) {
-                        wireGroup.forEach(connectedNodeId => {
-                            // Find the connected node
-                            const connectedNode = flows.find(flowItem => flowItem.id === connectedNodeId);
-                            if (connectedNode && connectedNode.type === 'debug') {
-                                node.log(`✅ Found debug node: ${connectedNode.id} (${connectedNode.name || 'unnamed'}) connected to output ${outputIndex}`);
-                                
-                                connectedDebugNodes.push({
-                                    id: connectedNode.id,
-                                    name: connectedNode.name || `Debug (${connectedNode.id})`,
-                                    complete: connectedNode.complete || 'payload',
-                                    targetType: connectedNode.targetType || 'msg',
-                                    statusVal: connectedNode.statusVal || '',
-                                    statusType: connectedNode.statusType || 'auto',
-                                    console: connectedNode.console !== false, // default true
-                                    tostatus: connectedNode.tostatus || false,
-                                    tosidebar: connectedNode.tosidebar !== false, // default true
-                                    outputIndex: outputIndex
-                                });
-                            }
-                        });
-                    }
-                });
-
-                node.log(`Found ${connectedDebugNodes.length} debug nodes connected from function node ${functionNodeId}`);
-                if (connectedDebugNodes.length > 0) {
-                    node.log('Connected debug nodes:', connectedDebugNodes.map(n => `${n.id} (${n.name})`));
-                }
-                
-                return connectedDebugNodes;
-
-            } catch (error) {
-                node.error(`Error finding connected debug nodes: ${error.message}`);
-                return [];
-            }
-        }
-
         // Find inject nodes connected to a specific function node
         function findConnectedInjectNodes(functionNodeId) {
             try {
@@ -1285,20 +1113,27 @@ module.exports = function(RED) {
         
         // Initialize everything
         initEditorServer();
-        initNodeRedWebSocket();
         extractFromFlows();
-        // watchFlowsFile(); // Disabled for manual approach like flow2src
+        
+        // Start file watchers based on configuration
+        if (node.watchEnabled) {
+            watchFlowsFile(); // Watch flows.json for extracting changes
+            watchFunctionsDirectory(); // Watch functions directory for collecting changes
+            node.log('File watching enabled - live sync is active');
+        } else {
+            node.log('File watching disabled - using manual sync only');
+        }
         
         // Cleanup on close
         node.on('close', () => {
             if (watcher) {
                 watcher.close();
             }
+            if (functionsWatcher) {
+                functionsWatcher.close();
+            }
             if (io) {
                 io.close();
-            }
-            if (nodeRedSocket) {
-                nodeRedSocket.disconnect();
             }
         });
     }

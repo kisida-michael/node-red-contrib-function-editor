@@ -98,10 +98,6 @@ const InjectNodeTrigger = ({ currentNode, showStatusMessage }) => {
   return (
     <div className="bg-editor-darker p-3 h-full overflow-y-auto">
       <div className="flex items-center justify-between mb-2">
-        <h3 className="text-sm font-medium text-white flex items-center">
-          <FontAwesomeIcon icon={faPlay} className="mr-2 text-green-400" />
-          Connected Inject Nodes
-        </h3>
         <button
           onClick={loadInjectNodes}
           disabled={loading}

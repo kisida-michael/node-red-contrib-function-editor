@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { io } from 'socket.io-client'
 import FileTree from './components/FileTree'
 import MonacoEditor from './components/MonacoEditor'
@@ -13,9 +13,18 @@ function App() {
   const [currentNode, setCurrentNode] = useState(null)
   const [currentContent, setCurrentContent] = useState('')
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
-  const [socket, setSocket] = useState(null)
   const [connectionStatus, setConnectionStatus] = useState({ connected: false, message: 'Connecting...' })
   const [statusMessage, setStatusMessage] = useState(null)
+  
+  // Refs to track current state in socket handlers
+  const currentNodeRef = useRef(currentNode)
+  const currentContentRef = useRef(currentContent)
+  const hasUnsavedChangesRef = useRef(hasUnsavedChanges)
+  
+  // Update refs when state changes
+  useEffect(() => { currentNodeRef.current = currentNode }, [currentNode])
+  useEffect(() => { currentContentRef.current = currentContent }, [currentContent])
+  useEffect(() => { hasUnsavedChangesRef.current = hasUnsavedChanges }, [hasUnsavedChanges])
 
   // Helper to find node info by filename
   const findNodeByFilename = (filename) => {
@@ -29,7 +38,6 @@ function App() {
   // Initialize Socket.IO connection
   useEffect(() => {
     const socketInstance = io()
-    setSocket(socketInstance)
 
     socketInstance.on('connect', () => {
       setConnectionStatus({ connected: true, message: 'Connected to Node-RED' })
@@ -39,24 +47,52 @@ function App() {
       setConnectionStatus({ connected: false, message: 'Disconnected from Node-RED' })
     })
 
-    socketInstance.on('files-extracted', () => {
-      loadFileTree()
-    })
-
     socketInstance.on('file-updated', (data) => {
       // Real-time sync: update editor if the file is currently open
+      const currentNode = currentNodeRef.current
+      const currentContent = currentContentRef.current
+      
       if (currentNode && currentNode.filename === data.filename && currentContent !== data.content) {
         setCurrentContent(data.content)
         setHasUnsavedChanges(false)
+        console.log(`Live update: ${data.filename} content updated in editor`)
       }
+      
       // Refresh file tree to show any new files
       loadFileTree()
+    })
+
+    socketInstance.on('files-extracted', () => {
+      console.log('Files extracted event received - refreshing file tree')
+      loadFileTree()
+      
+      // If we have a current file open, check if its content was updated
+      const currentNode = currentNodeRef.current
+      const hasUnsavedChanges = hasUnsavedChangesRef.current
+      
+      if (currentNode && currentNode.filename && !hasUnsavedChanges) {
+        setTimeout(async () => {
+          try {
+            const fileResponse = await fetch(`/api/file/${encodeURIComponent(currentNode.filename)}`)
+            const fileData = await fileResponse.json()
+            
+            // Only update if content actually changed
+            const currentContent = currentContentRef.current
+            if (fileData.content !== currentContent) {
+              setCurrentContent(fileData.content)
+              console.log(`Live update: ${currentNode.filename} content refreshed from flows.json`)
+            }
+          } catch (error) {
+            console.warn(`Could not refresh current file content: ${error.message}`)
+          }
+        }, 100) // Small delay to ensure files are written
+      }
     })
 
     return () => {
       socketInstance.close()
     }
-  }, [currentNode, currentContent])
+  }, [])
 
   // Load file tree from API
   const loadFileTree = async () => {
@@ -108,8 +144,6 @@ function App() {
 
       if (response.ok) {
         setHasUnsavedChanges(false)
-        
-        console.log('File saved successfully (not deployed)')
         showStatusMessage(`${currentNode.name} saved (not deployed)`, 'success')
       } else {
         throw new Error('Failed to save file')
@@ -137,8 +171,6 @@ function App() {
 
       if (response.ok) {
         setHasUnsavedChanges(false)
-        
-        console.log('File saved and deployed successfully')
         showStatusMessage(`${currentNode.name} saved and deployed!`, 'success')
       } else {
         throw new Error('Failed to save and deploy file')
@@ -149,7 +181,7 @@ function App() {
     }
   }
 
-  // Pull functions from flows.json
+  // Pull functions from flows.json (keep current file open)
   const pullFunctions = async () => {
     try {
       const response = await fetch('/api/pull-functions', {
@@ -160,8 +192,25 @@ function App() {
         const result = await response.json()
         if (result.success) {
           await loadFileTree()
-          console.log('Functions pulled successfully')
-          showStatusMessage('Functions pulled successfully', 'success')
+          
+          // If we have a current file open, reload its content to show any updates
+          if (currentNode && currentNode.filename) {
+            try {
+              const fileResponse = await fetch(`/api/file/${encodeURIComponent(currentNode.filename)}`)
+              const fileData = await fileResponse.json()
+              
+              // Only update if content actually changed
+              if (fileData.content !== currentContent) {
+                setCurrentContent(fileData.content)
+                setHasUnsavedChanges(false)
+                console.log(`Updated content for current file: ${currentNode.filename}`)
+              }
+            } catch (fileError) {
+              console.warn(`Could not reload current file: ${fileError.message}`)
+            }
+          }
+          
+          showStatusMessage('Functions pulled successfully (current file kept open)', 'success')
         } else {
           throw new Error(result.error || 'Failed to pull functions')
         }
@@ -184,7 +233,6 @@ function App() {
       if (response.ok) {
         const result = await response.json()
         if (result.success) {
-          console.log('Changes collected and flows reloaded successfully')
           showStatusMessage('Changes collected and flows reloaded!', 'success')
         } else {
           throw new Error(result.error || 'Failed to collect changes')
@@ -195,26 +243,6 @@ function App() {
     } catch (error) {
       console.error('Error collecting changes:', error)
       showStatusMessage('Error collecting changes: ' + error.message, 'error')
-    }
-  }
-
-  // Refresh files
-  const refreshFiles = async () => {
-    try {
-      const response = await fetch('/api/refresh', {
-        method: 'POST'
-      })
-
-      if (response.ok) {
-        await loadFileTree()
-        console.log('Files refreshed successfully')
-        showStatusMessage('Files refreshed successfully', 'success')
-      } else {
-        throw new Error('Failed to refresh files')
-      }
-    } catch (error) {
-      console.error('Error refreshing files:', error)
-      showStatusMessage('Error refreshing files: ' + error.message, 'error')
     }
   }
 
@@ -272,7 +300,6 @@ function App() {
           onSaveAndDeploy={saveAndDeployCurrentFile}
           onPullFunctions={pullFunctions}
           onCollectChanges={collectChanges}
-          onRefresh={refreshFiles}
         />
         
         <div className="flex-1 flex flex-col overflow-hidden">
@@ -287,7 +314,6 @@ function App() {
           <div className="flex-shrink-0">
             <TestingPanel 
               currentNode={currentNode}
-              socket={socket}
               showStatusMessage={showStatusMessage}
             />
           </div>

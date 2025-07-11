@@ -6,7 +6,8 @@
             name: { value: '' },
             port: { value: 3001, validate: RED.validators.number() },
             flowsFile: { value: './flows.json' },
-            deployMethod: { value: 'partial-http' }
+            deployMethod: { value: 'partial-http' },
+            watchEnabled: { value: true }
         },
         inputs: 0,
         outputs: 0,
@@ -28,24 +29,30 @@
                 </div>
                 <div class="form-row">
                     <label for="port-input">Port</label>
-                    <input type="number" id="port-input" value="${this.port || 3001}" min="1024" max="65535">
+                    <input type="number" id="port-input" value="${this.port}" min="1024" max="65535">
                 </div>
                 <div class="form-row">
                     <label for="flows-file-input">Flows File Path</label>
-                    <input type="text" id="flows-file-input" value="${this.flowsFile || './flows.json'}" placeholder="./flows.json">
+                    <input type="text" id="flows-file-input" value="${this.flowsFile}" placeholder="./flows.json">
                 </div>
                 <div class="form-row">
                     <label for="deploy-method-select">Deployment Method</label>
-                    <select id="deploy-method-select" style="width: 200px;">
-                        <option value="websocket">WebSocket (Fastest)</option>
-                        <option value="partial-http">HTTP Partial Deploy</option>
+                    <select id="deploy-method-select">
+                        <option value="partial-http">HTTP Partial Deploy (Recommended)</option>
                         <option value="full-http">Full Flow Deploy</option>
                     </select>
+                </div>
+                <div class="form-row">
+                    <label for="watch-enabled-checkbox">File Watching</label>
+                    <input type="checkbox" id="watch-enabled-checkbox">
                 </div>
             `);
             
             // Set the deployment method selection
-            $('#deploy-method-select').val(this.deployMethod || 'partial-http');
+            $('#deploy-method-select').val(this.deployMethod);
+            
+            // Set the watch enabled checkbox
+            $('#watch-enabled-checkbox').prop('checked', this.watchEnabled);
             
             // Handle opening the editor
             $('#open-editor-btn').click(function() {
@@ -59,9 +66,10 @@
         },
         oneditsave: function() {
             this.name = $('#node-input-name').val();
-            this.port = parseInt($('#port-input').val()) || 3001;
-            this.flowsFile = $('#flows-file-input').val() || './flows.json';
-            this.deployMethod = $('#deploy-method-select').val() || 'partial-http';
+            this.port = parseInt($('#port-input').val());
+            this.flowsFile = $('#flows-file-input').val();
+            this.deployMethod = $('#deploy-method-select').val();
+            this.watchEnabled = $('#watch-enabled-checkbox').prop('checked');
         }
     });
 </script>
@@ -83,7 +91,9 @@
         <li>Real-time synchronization with Node-RED flows</li>
         <li>File tree navigation for easy file management</li>
         <li>Auto-save functionality</li>
-        <li>Multiple deployment methods: WebSocket, HTTP Partial, and Full Flow</li>
+        <li>Multiple deployment methods: HTTP Partial and Full Flow</li>
+        <li>Live file watching for automatic bidirectional sync (configurable)</li>
+        <li>Reliable HTTP-based deployment system</li>
     </ul>
     
     <h3>Configuration</h3>
@@ -100,9 +110,16 @@
         <dt>Deployment Method <span class="property-type">string</span></dt>
         <dd>How changes are deployed to Node-RED:
             <ul>
-                <li><strong>WebSocket</strong> - Fastest, uses Node-RED's internal WebSocket protocol</li>
-                <li><strong>HTTP Partial Deploy</strong> - Uses custom HTTP endpoint for partial deployments</li>
+                <li><strong>HTTP Partial Deploy</strong> - Uses custom HTTP endpoint for partial deployments (Recommended)</li>
                 <li><strong>Full Flow Deploy</strong> - Replaces entire flow configuration (fallback)</li>
+            </ul>
+        </dd>
+        
+        <dt>File Watching <span class="property-type">boolean</span></dt>
+        <dd>Enable live file watching for automatic synchronization:
+            <ul>
+                <li><strong>Enabled</strong> - Automatically syncs changes between files and flows in both directions</li>
+                <li><strong>Disabled</strong> - Uses manual sync only (Pull Functions / Collect Changes buttons)</li>
             </ul>
         </dd>
     </dl>
@@ -119,8 +136,7 @@
     
     <h3>Deployment Methods</h3>
     <ul>
-        <li><strong>WebSocket (Recommended)</strong> - Uses the same protocol as Node-RED's editor for partial deployments. Fastest and most efficient.</li>
-        <li><strong>HTTP Partial Deploy</strong> - Uses a custom HTTP endpoint to deploy only changed nodes. Good fallback if WebSocket fails.</li>
+        <li><strong>HTTP Partial Deploy (Recommended)</strong> - Uses a custom HTTP endpoint to deploy only changed nodes. Fast and efficient.</li>
         <li><strong>Full Flow Deploy</strong> - Replaces the entire flow configuration. Safest but slowest method.</li>
     </ul>
     

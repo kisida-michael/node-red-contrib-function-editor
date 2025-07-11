@@ -1,13 +1,58 @@
+# Development files (React source code)
+/src/
+public/
+dev.sh
+.gitignore
+.eslintrc.js
+.prettierrc
+
+# NOTE: /src/ excludes root src/ but allows dist/src/ (built files)
+
+# Build tools
+vite.config.js
+postcss.config.js
+tailwind.config.js
+
+# Development dependencies
 node_modules/
-*.tgz
-*.tar.gz
 .DS_Store
 *.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local 
+.env*
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test files
+test/
+tests/
+*.test.js
+*.spec.js
+
+# Documentation drafts
+docs/
+CONTRIBUTING.md
+PUBLISHING.md
+
+# Git
+.git/
+.gitattributes
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.tgz
+
+# Functions directory (user-generated)
+functions/
+
+# Keep these files for publishing
+# README.md
+# LICENSE
+# package.json
+# function-editor.js
+# function-editor.html
+# dist/ 

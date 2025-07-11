@@ -3,33 +3,137 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faFolder, faCubes, faCode, faFile } from '@fortawesome/free-solid-svg-icons'
 
 const FileTree = ({ files, currentFile, onSelectFile }) => {
-  // Initialize with all flows collapsed
+  // Helper functions for localStorage persistence
+  const getStoredCollapsedFlows = () => {
+    try {
+      const stored = localStorage.getItem('function-editor-collapsed-flows')
+      return stored ? new Set(JSON.parse(stored)) : new Set()
+    } catch {
+      return new Set()
+    }
+  }
+
+  const getStoredCollapsedSubflows = () => {
+    try {
+      const stored = localStorage.getItem('function-editor-collapsed-subflows')
+      return stored ? new Set(JSON.parse(stored)) : new Set()
+    } catch {
+      return new Set()
+    }
+  }
+
+  const getStoredFlowsSectionCollapsed = () => {
+    try {
+      const stored = localStorage.getItem('function-editor-flows-section-collapsed')
+      return stored ? JSON.parse(stored) : true
+    } catch {
+      return true
+    }
+  }
+
+  const getStoredSubflowsSectionCollapsed = () => {
+    try {
+      const stored = localStorage.getItem('function-editor-subflows-section-collapsed')
+      return stored ? JSON.parse(stored) : true
+    } catch {
+      return true
+    }
+  }
+
+  // Initialize states with localStorage or defaults
   const [collapsedFlows, setCollapsedFlows] = useState(() => {
-    if (!files.flows) return new Set()
-    return new Set(files.flows.map(flow => flow.id))
+    const stored = getStoredCollapsedFlows()
+    // If no stored state and we have flows, collapse all initially
+    if (stored.size === 0 && files.flows && files.flows.length > 0) {
+      return new Set(files.flows.map(flow => flow.id))
+    }
+    return stored
   })
-  // Initialize with all subflows collapsed  
+  
   const [collapsedSubflows, setCollapsedSubflows] = useState(() => {
-    if (!files.subflows) return new Set()
-    return new Set(files.subflows.map(subflow => subflow.id))
+    const stored = getStoredCollapsedSubflows()
+    // If no stored state and we have subflows, collapse all initially
+    if (stored.size === 0 && files.subflows && files.subflows.length > 0) {
+      return new Set(files.subflows.map(subflow => subflow.id))
+    }
+    return stored
   })
-  const [flowsSectionCollapsed, setFlowsSectionCollapsed] = useState(true)
+  
+  const [flowsSectionCollapsed, setFlowsSectionCollapsed] = useState(getStoredFlowsSectionCollapsed)
+  const [subflowsSectionCollapsed, setSubflowsSectionCollapsed] = useState(getStoredSubflowsSectionCollapsed)
   const [searchTerm, setSearchTerm] = useState('')
 
-  // Update collapsed state when files change
+  // Handle new files being added (preserve existing states, collapse new ones)
   useEffect(() => {
     if (files.flows) {
-      setCollapsedFlows(new Set(files.flows.map(flow => flow.id)))
+      setCollapsedFlows(prevCollapsed => {
+        const newCollapsed = new Set(prevCollapsed)
+        const currentFlowIds = new Set(files.flows.map(flow => flow.id))
+        
+        // Add any new flows as collapsed
+        files.flows.forEach(flow => {
+          if (!prevCollapsed.has(flow.id) && !getStoredCollapsedFlows().has(flow.id)) {
+            newCollapsed.add(flow.id)
+          }
+        })
+        
+        // Remove any flows that no longer exist
+        for (const flowId of prevCollapsed) {
+          if (!currentFlowIds.has(flowId)) {
+            newCollapsed.delete(flowId)
+          }
+        }
+        
+        return newCollapsed
+      })
     }
+    
     if (files.subflows) {
-      setCollapsedSubflows(new Set(files.subflows.map(subflow => subflow.id)))
+      setCollapsedSubflows(prevCollapsed => {
+        const newCollapsed = new Set(prevCollapsed)
+        const currentSubflowIds = new Set(files.subflows.map(subflow => subflow.id))
+        
+        // Add any new subflows as collapsed
+        files.subflows.forEach(subflow => {
+          if (!prevCollapsed.has(subflow.id) && !getStoredCollapsedSubflows().has(subflow.id)) {
+            newCollapsed.add(subflow.id)
+          }
+        })
+        
+        // Remove any subflows that no longer exist
+        for (const subflowId of prevCollapsed) {
+          if (!currentSubflowIds.has(subflowId)) {
+            newCollapsed.delete(subflowId)
+          }
+        }
+        
+        return newCollapsed
+      })
     }
   }, [files])
 
-  // Auto-expand when searching
+  // Persist collapsed states to localStorage
+  useEffect(() => {
+    localStorage.setItem('function-editor-collapsed-flows', JSON.stringify(Array.from(collapsedFlows)))
+  }, [collapsedFlows])
+
+  useEffect(() => {
+    localStorage.setItem('function-editor-collapsed-subflows', JSON.stringify(Array.from(collapsedSubflows)))
+  }, [collapsedSubflows])
+
+  useEffect(() => {
+    localStorage.setItem('function-editor-flows-section-collapsed', JSON.stringify(flowsSectionCollapsed))
+  }, [flowsSectionCollapsed])
+
+  useEffect(() => {
+    localStorage.setItem('function-editor-subflows-section-collapsed', JSON.stringify(subflowsSectionCollapsed))
+  }, [subflowsSectionCollapsed])
+
+  // Auto-expand when searching (but preserve state when search is cleared)
   useEffect(() => {
     if (searchTerm.trim()) {
       setFlowsSectionCollapsed(false)
+      setSubflowsSectionCollapsed(false)
       setCollapsedFlows(new Set()) // Expand all flows when searching
       setCollapsedSubflows(new Set()) // Expand all subflows when searching
     }
@@ -205,27 +309,38 @@ const FileTree = ({ files, currentFile, onSelectFile }) => {
 
           {/* Subflows Section */}
           {filteredFiles.subflows && filteredFiles.subflows.length > 0 && (
-            <div className="mt-2">
-              {filteredFiles.subflows.map(subflow => {
-                const isCollapsed = collapsedSubflows.has(subflow.id)
-                return (
-                  <div key={subflow.id} className="mb-1">
-                    <SubflowHeader
-                      subflow={subflow}
-                      isCollapsed={isCollapsed}
-                      onToggle={() => toggleSubflow(subflow.id)}
-                    />
-                    {!isCollapsed && (
-                      <div className="bg-editor-sidebar">
-                        {subflow.nodes.map(node => (
-                          <NodeItem key={node.id} node={node} />
-                        ))}
+            <>
+              <div
+                className="flex items-center px-2 sm:px-3 lg:px-4 py-1.5 cursor-pointer text-xs sm:text-sm font-semibold bg-editor-header border-t border-b border-editor-border hover:bg-editor-hover transition-colors text-blue-300 mt-2"
+                onClick={() => setSubflowsSectionCollapsed(!subflowsSectionCollapsed)}
+              >
+                <span className={`mr-1 sm:mr-2 text-xs transition-transform ${subflowsSectionCollapsed ? '-rotate-90' : ''}`}>▼</span>
+                <span>Subflows</span>
+              </div>
+              {!subflowsSectionCollapsed && (
+                <div className="bg-editor-sidebar">
+                  {filteredFiles.subflows.map(subflow => {
+                    const isCollapsed = collapsedSubflows.has(subflow.id)
+                    return (
+                      <div key={subflow.id} className="mb-1">
+                        <SubflowHeader
+                          subflow={subflow}
+                          isCollapsed={isCollapsed}
+                          onToggle={() => toggleSubflow(subflow.id)}
+                        />
+                        {!isCollapsed && (
+                          <div className="bg-editor-sidebar">
+                            {subflow.nodes.map(node => (
+                              <NodeItem key={node.id} node={node} />
+                            ))}
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
+                    )
+                  })}
+                </div>
+              )}
+            </>
           )}
 
           {/* No results message */}

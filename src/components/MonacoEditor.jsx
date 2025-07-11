@@ -13,14 +13,14 @@ if (typeof window !== 'undefined') {
       const hostname = window.location.hostname
       const nodeRedPort = 1880 // Node-RED typically runs on port 1880
       const baseUrl = `${protocol}//${hostname}:${nodeRedPort}/vendor/monaco/dist/`
-      
+
       if (label === 'json') {
         return baseUrl + 'json.worker.js'
       }
       if (label === 'css' || label === 'scss' || label === 'less') {
         return baseUrl + 'css.worker.js'
       }
-      if (label === 'html' || label === 'handlebars' || label === 'razor') {
+      if (label === 'html' || label === 'handlebars' || label || 'razor') {
         return baseUrl + 'html.worker.js'
       }
       if (label === 'typescript' || label === 'javascript') {
@@ -33,6 +33,51 @@ if (typeof window !== 'undefined') {
 
 const MonacoEditor = ({ filename, content, onChange }) => {
   const editorRef = useRef(null)
+  const previousContentRef = useRef(content)
+  const isExternalUpdateRef = useRef(false)
+
+  // Handle content updates while preserving cursor position and undo/redo history
+  useEffect(() => {
+    const editor = editorRef.current
+    if (editor && content !== previousContentRef.current) {
+      const model = editor.getModel()
+      if (model) {
+        const currentContent = model.getValue()
+
+        // Only update if content is actually different from current editor content
+        if (content !== currentContent) {
+          isExternalUpdateRef.current = true
+
+          const position = editor.getPosition()
+          const selection = editor.getSelection()
+          const scrollTop = editor.getScrollTop()
+
+          // Use pushEditOperations to preserve undo/redo history instead of setValue
+          const range = model.getFullModelRange()
+          const operation = {
+            range: range,
+            text: content,
+            forceMoveMarkers: true
+          }
+
+          // pushEditOperations can return a selection array, but we don't need it here.
+          model.pushEditOperations([], [operation], () => null)
+
+          // Restore cursor position and scroll
+          // Using a setTimeout to ensure the DOM has updated and Monaco has re-rendered
+          // before trying to set position/selection/scroll.
+          setTimeout(() => {
+            editor.setPosition(position)
+            editor.setSelection(selection)
+            editor.setScrollTop(scrollTop)
+            isExternalUpdateRef.current = false
+          }, 0)
+        }
+      }
+
+      previousContentRef.current = content
+    }
+  }, [content]) // Dependency array ensures this runs when `content` prop changes
 
   const handleEditorDidMount = (editor, monaco) => {
     editorRef.current = editor
@@ -64,16 +109,16 @@ const MonacoEditor = ({ filename, content, onChange }) => {
       allowSyntheticDefaultImports: true,
       allowJs: true,
       checkJs: true,
-      strict: false,
-      noImplicitAny: false,
-      strictNullChecks: false,
+      strict: false, // Keep false to avoid too many strict type errors
+      noImplicitAny: false, // Keep false to allow implicit 'any'
+      strictNullChecks: false, // Keep false for looser null checks
       strictFunctionTypes: false,
       noImplicitReturns: false,
       noImplicitThis: false,
       alwaysStrict: false,
       allowUnreachableCode: true,
       allowUnusedLabels: true,
-      skipLibCheck: true,
+      skipLibCheck: true, // Skip checking d.ts files, generally good for performance
       skipDefaultLibCheck: false, // Allow default lib to be checked
       allowUmdGlobalAccess: true, // Allow global variable access
       lib: [
@@ -84,9 +129,10 @@ const MonacoEditor = ({ filename, content, onChange }) => {
     })
 
     // Enable selective TypeScript validation for undefined variables
+    // This is where Monaco's built-in linter (TypeScript language service) does its work.
     monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
-      noSemanticValidation: false,
-      noSyntaxValidation: false,
+      noSemanticValidation: false, // Enable semantic checks (e.g., type checking, undefined vars)
+      noSyntaxValidation: false,   // Enable syntax checks
       noSuggestionDiagnostics: false,
       diagnosticCodesToIgnore: [
         1108, // A 'return' statement can only be used within a function body
@@ -97,109 +143,77 @@ const MonacoEditor = ({ filename, content, onChange }) => {
         1128, // Declaration or statement expected
         2792, // Cannot find module
         7016, // Could not find a declaration file for module
-        7006, // Parameter implicitly has an 'any' type
-        7031, // Binding element implicitly has an 'any' type
-        2339, // Property does not exist on type
-        2551, // Property does not exist on type. Did you mean
-        2345, // Argument of type is not assignable to parameter of type
-        2322, // Type is not assignable to type
+        // 7006, // Parameter implicitly has an 'any' type - Re-enable if you want stricter param typing
+        // 7031, // Binding element implicitly has an 'any' type - Re-enable for stricter binding typing
+        // The following were previously ignored, now enabled for better linting:
+        // 2339, // Property does not exist on type (e.g., msg.typo)
+        // 2551, // Property does not exist on type. Did you mean (e.g., msg.payload -> msg.paylod)
+        // 2345, // Argument of type is not assignable to parameter of type
+        // 2322, // Type is not assignable to type
         2531, // Object is possibly 'null'
         2532, // Object is possibly 'undefined'
         18048 // 'this' is of type 'unknown'
-        // Keep 2304 (Cannot find name) - this gives us undefined variable errors
+        // Keeping 2304 (Cannot find name) NOT ignored. This is the primary error for undefined variables.
+        // Keeping 6133 ("'...' is declared but never used") NOT ignored. This is for unused vars.
+        // Note: if 6133 is too noisy, you can add it to this array.
       ]
     })
 
     // Set eager model sync for better responsiveness
     monaco.languages.typescript.javascriptDefaults.setEagerModelSync(true)
 
-    // ESLint-like validation function
+    // *** MODIFIED: Simplified validateCode to only handle Node-RED specific warnings ***
     const validateCode = (code, model) => {
       const markers = []
       const lines = code.split('\n')
-      
+
       lines.forEach((line, lineIndex) => {
         const lineNumber = lineIndex + 1
         const trimmedLine = line.trim()
-        
-        // Check for common JavaScript issues
-        
-        // Missing semicolons (simplified check)
-        
-        
-        
-        // Unused variables (simplified check)
-        const varDeclarationMatch = line.match(/(?:var|let|const)\s+(\w+)/g)
-        if (varDeclarationMatch) {
-          varDeclarationMatch.forEach(match => {
-            const varName = match.split(/\s+/)[1]
-            if (varName && !['msg', 'node', 'context', 'flow', 'global', 'RED', 'env'].includes(varName)) {
-              // Simple check if variable is used elsewhere in code
-              const varUsageRegex = new RegExp(`\\b${varName}\\b`, 'g')
-              const matches = (code.match(varUsageRegex) || []).length
-              if (matches <= 1) { // Only declared, not used
-                markers.push({
-                  message: `'${varName}' is defined but never used (ESLint: no-unused-vars)`,
-                  severity: monaco.MarkerSeverity.Warning,
-                  startLineNumber: lineNumber,
-                  startColumn: line.indexOf(varName) + 1,
-                  endLineNumber: lineNumber,
-                  endColumn: line.indexOf(varName) + varName.length + 1,
-                  code: 'no-unused-vars'
-                })
-              }
-            }
-          })
-        }
-        
-        // Debugger statements
+
+        // Debugger statements (Node-RED specific policy)
         if (trimmedLine.includes('debugger')) {
           markers.push({
-            message: 'Unexpected debugger statement (ESLint: no-debugger)',
+            message: 'Unexpected debugger statement.',
             severity: monaco.MarkerSeverity.Warning,
             startLineNumber: lineNumber,
             startColumn: line.indexOf('debugger') + 1,
             endLineNumber: lineNumber,
             endColumn: line.indexOf('debugger') + 'debugger'.length + 1,
-            code: 'no-debugger'
+            code: 'no-debugger' // Custom code for the warning
           })
         }
-        
-        // Console statements (informational)
+
+        // Console statements (Node-RED specific policy - often used for debugging, but good to flag)
         if (trimmedLine.includes('console.')) {
           markers.push({
-            message: 'Unexpected console statement (ESLint: no-console)',
+            message: 'Unexpected console statement.',
             severity: monaco.MarkerSeverity.Info,
             startLineNumber: lineNumber,
             startColumn: line.indexOf('console') + 1,
             endLineNumber: lineNumber,
             endColumn: line.indexOf('console') + 'console'.length + 1,
-            code: 'no-console'
+            code: 'no-console' // Custom code for the warning
           })
         }
-        
-        // Equality checks - DISABLED per user request
-        // Users often prefer == for loose equality in Node-RED contexts
-        
-        // Trailing spaces
-
-        
-        
-        // Multiple empty lines
-        
+        // Removed: Missing semicolons, Unused variables (simplified check), Equality checks, Trailing spaces, Multiple empty lines
+        // These are either handled by TypeScript language service or are too complex for simple regex.
       })
-      
-      // Set markers on the model
-      monaco.editor.setModelMarkers(model, 'eslint', markers)
+
+      // Set markers on the model for custom warnings
+      // Use a unique owner string for your custom markers
+      monaco.editor.setModelMarkers(model, 'node-red-lint', markers)
     }
 
     // Validate code on changes (debounced)
     let validationTimeout
     const handleCodeChange = () => {
       const model = editor.getModel()
-      if (model) {
+      if (model && !isExternalUpdateRef.current) { // Only run custom validation on user input
         clearTimeout(validationTimeout)
         validationTimeout = setTimeout(() => {
+          // It's not strictly necessary to clear 'ts' markers manually,
+          // as Monaco's TS service updates them. Just running custom validation.
           validateCode(model.getValue(), model)
         }, 500) // Debounce validation
       }
@@ -254,16 +268,15 @@ const MonacoEditor = ({ filename, content, onChange }) => {
     `
 
     monaco.languages.typescript.javascriptDefaults.addExtraLib(nodeRedTypes, 'ts:node-red.d.ts')
-    
-    console.log('TypeScript validation enabled for undefined variables!')
-    console.log('Only Node-RED globals declared - undefined variables like "gg", "someUndefinedVar" should show TypeScript errors')
+
+ 
 
     // Register Prettier as the document formatter for JavaScript
     const formattingProvider = monaco.languages.registerDocumentFormattingEditProvider('javascript', {
       provideDocumentFormattingEdits: async (model, options, token) => {
         try {
           const code = model.getValue()
-          
+
           // Prettier configuration optimized for Node-RED functions
           const prettierOptions = {
             parser: 'babel',
@@ -280,9 +293,9 @@ const MonacoEditor = ({ filename, content, onChange }) => {
             endOfLine: 'lf',
             quoteProps: 'as-needed'
           }
-          
+
           const formatted = await prettier.format(code, prettierOptions)
-          
+
           // Return the edit that replaces the entire document
           return [
             {
@@ -303,7 +316,7 @@ const MonacoEditor = ({ filename, content, onChange }) => {
       provideDocumentRangeFormattingEdits: async (model, range, options, token) => {
         try {
           const code = model.getValueInRange(range)
-          
+
           const prettierOptions = {
             parser: 'babel',
             plugins: [babelPlugin, estreePlugin],
@@ -319,9 +332,11 @@ const MonacoEditor = ({ filename, content, onChange }) => {
             endOfLine: 'lf',
             quoteProps: 'as-needed'
           }
-          
+
           const formatted = await prettier.format(code, prettierOptions)
-          
+
+          // Prettier might format a range with leading/trailing newlines if it considers
+          // it a full block. `trim()` ensures we only insert the actual code.
           return [
             {
               range: range,
@@ -350,16 +365,18 @@ const MonacoEditor = ({ filename, content, onChange }) => {
         // Get current line content for context-aware suggestions
         const lineContent = model.getLineContent(position.lineNumber)
         const textBeforeCursor = lineContent.substring(0, position.column - 1)
-        
+
         // Analyze object structure for intelligent completion
+        // This function is still using regex, which is okay for a custom completion provider
+        // as it's an enhancement, not the primary source of truth for errors.
         const getObjectProperties = (objectName, code) => {
           const properties = []
-          
+
           // Look for object literal definitions in the code
           const objectDefRegex = new RegExp(`(?:var|let|const)\\s+\\w+\\s*=\\s*({[\\s\\S]*?${objectName}[\\s\\S]*?});`, 'g')
           const directObjectRegex = new RegExp(`(?:var|let|const)\\s+${objectName}\\s*=\\s*({[\\s\\S]*?});`, 'g')
           const match = objectDefRegex.exec(code) || directObjectRegex.exec(code)
-          
+
           if (match) {
             try {
               // Try to parse as JSON to extract properties
@@ -381,7 +398,7 @@ const MonacoEditor = ({ filename, content, onChange }) => {
               }
             }
           }
-          
+
           // Also look for direct object property assignments
           const assignmentRegex = new RegExp(`${objectName}\\.(\\w+)\\s*=`, 'g')
           let assignMatch
@@ -390,7 +407,7 @@ const MonacoEditor = ({ filename, content, onChange }) => {
               properties.push(assignMatch[1])
             }
           }
-          
+
           return properties
         }
 
@@ -398,16 +415,16 @@ const MonacoEditor = ({ filename, content, onChange }) => {
         const objectAccessMatch = textBeforeCursor.match(/(\w+(?:\.\w+)*?)\.(\w*)$/)
         const simpleObjectMatch = textBeforeCursor.match(/(\w+)\.$/)
         const isNodeRedContext = /\b(msg|node|context|flow|global|env|RED)\s*\.$/.test(textBeforeCursor)
-        
+
         if (context.triggerCharacter === '.' && (objectAccessMatch || simpleObjectMatch) && !isNodeRedContext) {
           const currentCode = model.getValue()
           let suggestions = []
-          
+
           if (simpleObjectMatch) {
             // Simple case: objectName.
             const objectName = simpleObjectMatch[1]
             const properties = getObjectProperties(objectName, currentCode)
-            
+
             if (properties.length > 0) {
               suggestions = properties.map((prop, index) => ({
                 label: prop,
@@ -423,20 +440,20 @@ const MonacoEditor = ({ filename, content, onChange }) => {
             // Nested case: object.property. or complex.path.
             const fullPath = objectAccessMatch[1]
             const pathParts = fullPath.split('.')
-            
+
             if (pathParts.length === 2) {
               // Handle cases like teams.Red. - look for Red properties in teams object
               const [parentObject, childObject] = pathParts
-              
+
               // Look for the parent object definition and extract child object properties
               const parentObjectRegex = new RegExp(`(?:var|let|const)\\s+${parentObject}\\s*=\\s*({[\\s\\S]*?});`, 'g')
               const parentMatch = parentObjectRegex.exec(currentCode)
-              
+
               if (parentMatch) {
                 // Look for the specific child object properties
                 const childObjectRegex = new RegExp(`"${childObject}"\\s*:\\s*{([^}]*)}`, 'g')
                 const childMatch = childObjectRegex.exec(parentMatch[1])
-                
+
                 if (childMatch) {
                   const childProps = []
                   const propRegex = /"(\w+)":/g
@@ -444,7 +461,7 @@ const MonacoEditor = ({ filename, content, onChange }) => {
                   while ((propMatch = propRegex.exec(childMatch[1])) !== null) {
                     childProps.push(propMatch[1])
                   }
-                  
+
                   suggestions = childProps.map((prop, index) => ({
                     label: prop,
                     kind: monaco.languages.CompletionItemKind.Property,
@@ -458,12 +475,12 @@ const MonacoEditor = ({ filename, content, onChange }) => {
               }
             }
           }
-          
+
           if (suggestions.length > 0) {
             return { suggestions }
           }
         }
-        
+
         if (!isNodeRedContext && context.triggerCharacter === '.') {
           // Let built-in TypeScript completion handle other object property completion
           return { suggestions: [] }
@@ -772,6 +789,53 @@ const MonacoEditor = ({ filename, content, onChange }) => {
       }
     })
 
+
+    // Custom Undo/Redo actions for context menu.
+    // Monaco has built-in undo/redo actions, and these custom actions
+    // typically just call the built-in ones. This ensures they appear
+    // in the right context menu group and order if you need fine control.
+    editor.addAction({
+      id: 'custom-undo',
+      label: '↶ Undo',
+      keybindings: [
+        monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyZ
+      ],
+      contextMenuGroupId: 'modification',
+      contextMenuOrder: 1.0,
+      run: function (ed) {
+        // Run Monaco's built-in undo action
+        const undoAction = ed.getAction('editor.action.undo')
+        if (undoAction) {
+          undoAction.run()
+        } else {
+          // Fallback: try direct model undo
+          ed.getModel()?.undo()
+        }
+      }
+    })
+
+    editor.addAction({
+      id: 'custom-redo',
+      label: '↷ Redo',
+      keybindings: [
+        monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyY,
+        monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyZ
+      ],
+      contextMenuGroupId: 'modification',
+      contextMenuOrder: 1.1,
+      run: function (ed) {
+        // Run Monaco's built-in redo action
+        const redoAction = ed.getAction('editor.action.redo')
+        if (redoAction) {
+          redoAction.run()
+        } else {
+          // Fallback: try direct model redo
+          ed.getModel()?.redo()
+        }
+      }
+    })
+
+
     // Add keyboard shortcuts and context menu actions for formatting
     editor.addAction({
       id: 'format-document',
@@ -799,13 +863,9 @@ const MonacoEditor = ({ filename, content, onChange }) => {
         ed.getAction('editor.action.formatDocument').run()
       }
     })
-    
-    console.log('Monaco Editor with Prettier formatting enabled!')
-    console.log('Keyboard shortcuts:')
-    console.log('  • Ctrl+Shift+I (or Cmd+Shift+I on Mac) - Format Document')
-    console.log('  • Alt+Shift+F - Format with Prettier') 
-    console.log('  • Right-click → "Format Document" or "🎨 Format with Prettier"')
-    
+
+
+
     // Clean up providers when component unmounts
     editor.onDidDispose(() => {
       completionProvider?.dispose()
@@ -818,7 +878,7 @@ const MonacoEditor = ({ filename, content, onChange }) => {
 
   const getLanguage = (filename) => {
     if (!filename) return 'javascript'
-    
+
     const ext = filename.split('.').pop()?.toLowerCase()
     switch (ext) {
       case 'js': return 'javascript'
@@ -838,8 +898,8 @@ const MonacoEditor = ({ filename, content, onChange }) => {
   }
 
   const defaultContent = filename 
-    ? `// Select a file from the sidebar to start editing`
-    : `// 🚀 VS Code-Level IntelliSense + ESLint + Prettier Enabled!`
+    || `// Select a file from the sidebar to start editing`
+
 
 
   return (
@@ -848,7 +908,12 @@ const MonacoEditor = ({ filename, content, onChange }) => {
         height="100%"
         language={getLanguage(filename)}
         value={content || defaultContent}
-        onChange={onChange}
+        onChange={(value) => {
+          // Ensure onChange is only called for user edits, not external content updates
+          if (!isExternalUpdateRef.current) {
+            onChange(value)
+          }
+        }}
         onMount={handleEditorDidMount}
         theme="node-red-dark"
         options={{
@@ -875,56 +940,60 @@ const MonacoEditor = ({ filename, content, onChange }) => {
           unfoldOnClickAfterEndOfLine: false,
           bracketPairColorization: { enabled: true },
 
-          // VS Code-level IntelliSense configuration
+          // Streamlined autocomplete - focused on Node-RED essentials
           suggest: {
+            // Core JavaScript essentials
             showMethods: true,
             showFunctions: true,
-            showConstructors: true,
-            showFields: true,
             showVariables: true,
-            showClasses: true,
-            showStructs: true,
-            showInterfaces: true,
-            showModules: true,
             showProperties: true,
-            showEvents: true,
-            showOperators: true,
-            showUnits: true,
+            showKeywords: true,
             showValues: true,
             showConstants: true,
-            showEnums: true,
-            showEnumMembers: true,
-            showKeywords: true,
-            showWords: true,
-            showColors: true,
-            showFiles: true,
-            showReferences: true,
-            showFolders: true,
-            showTypeParameters: true,
             showSnippets: true,
-            snippetsPreventQuickSuggestions: false,
-            localityBonus: true,
-            shareSuggestSelections: true,
+            
+            // Simplified display
             showIcons: true,
-            maxVisibleSuggestions: 12,
-            showStatusBar: true,
-            preview: true,
-            previewMode: 'prefix',
-            showInlineDetails: true,
-            showDetailedLabels: true
+            maxVisibleSuggestions: 6,  // Reduced from 12
+            showStatusBar: false,      // Cleaner UI
+            preview: false,            // Less visual clutter
+            showInlineDetails: false,  // Cleaner suggestions
+            showDetailedLabels: false, // Simpler labels
+            
+            // Disabled noise
+            showConstructors: false,
+            showClasses: false,
+            showStructs: false,
+            showInterfaces: false,
+            showModules: false,
+            showEvents: false,
+            showOperators: false,
+            showUnits: false,
+            showEnums: false,
+            showEnumMembers: false,
+            showWords: false,          // Reduces random word suggestions
+            showColors: false,
+            showFiles: false,
+            showReferences: false,
+            showFolders: false,
+            showTypeParameters: false,
+            
+            // Behavior
+            snippetsPreventQuickSuggestions: true,  // Less aggressive
+            localityBonus: true,
+            shareSuggestSelections: false
           },
           quickSuggestions: {
             other: true,
             comments: false,
-            strings: true
+            strings: false            // Don't suggest in strings
           },
-          quickSuggestionsDelay: 10,
+          quickSuggestionsDelay: 300,  // Less aggressive (was 10ms)
           suggestOnTriggerCharacters: true,
-          acceptSuggestionOnCommitCharacter: true,
-          acceptSuggestionOnEnter: 'on',
+          acceptSuggestionOnCommitCharacter: false,  // Less aggressive acceptance
+          acceptSuggestionOnEnter: 'smart',         // Only when clearly intended
           tabCompletion: 'on',
-          wordBasedSuggestions: true,
-          wordBasedSuggestionsOnlySameLanguage: false,
+          wordBasedSuggestions: false,              // Reduces noise
           parameterHints: {
             enabled: true,
             cycle: true
@@ -943,11 +1012,15 @@ const MonacoEditor = ({ filename, content, onChange }) => {
 
           // Prettier formatting options
           formatOnSave: false, // Don't auto-format on save (user can trigger manually)
-          formatOnPasteAutoIndent: false  // Disable auto-indent on paste
+          formatOnPasteAutoIndent: false,  // Disable auto-indent on paste
+
+          // Undo/Redo configuration - Ensure these are in the options object.
+          undoRedoStackSize: 100, // Keep 100 undo/redo operations
+          multiCursorModifier: 'ctrlCmd'
         }}
       />
     </div>
   )
 }
 
-export default MonacoEditor 
+export default MonacoEditor
